@@ -168,6 +168,29 @@ h2{font-size:14px;margin:16px 2px 6px;color:var(--muted);font-weight:600}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px;border:1px solid var(--line)}
 
 /* 保存バー */
+/* 写真 */
+.h2row{display:flex;align-items:center;gap:8px;margin:16px 2px 6px}
+.h2row h2{margin:0;flex:1}
+.campill{display:flex;gap:5px;align-items:center;font-size:13px;font-weight:700;color:var(--accent);background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:4px 11px}
+.campill svg,.addpic svg{width:17px;height:17px}
+.cam{width:46px;height:46px;border-radius:10px;background:var(--alert);color:#fff;display:grid;place-items:center;flex:none}
+.cam svg{width:22px;height:22px}
+.photos{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-bottom:10px}
+.photos-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.photos-h b{flex:1;font-size:15px}
+.addpic{display:flex;gap:6px;align-items:center;background:var(--accent);color:var(--on-accent);border-radius:99px;padding:7px 14px;font-weight:700;font-size:14px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
+.thumbs.mini-t{margin-top:8px}
+.thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:var(--empty);border:1px solid var(--line);padding:0}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb span{position:absolute;left:0;right:0;bottom:0;font-size:10.5px;line-height:1.25;padding:3px 5px;background:rgba(10,20,30,.62);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.thumb em{position:absolute;top:4px;right:4px;font-style:normal;font-size:10px;background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:0 5px;font-weight:700}
+.chip.pic{background:var(--accent-soft);color:var(--accent)}
+.viewer{position:fixed;inset:0;z-index:30;background:rgba(5,10,16,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+.viewer img{max-width:100%;max-height:78vh;border-radius:8px}
+.viewer p{color:#e5ecf4;font-size:14px;margin:10px 0 0;text-align:center}
+.viewer button{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:14px;color:#fff;font-size:30px;width:48px;height:48px}
+
 .savebar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
   padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px)}
 .savebar button{display:block;width:100%;max-width:536px;margin:0 auto;height:56px;border-radius:14px;background:var(--accent);color:var(--on-accent);font-size:18px;font-weight:700}
@@ -219,13 +242,14 @@ svg .fc{stroke:var(--muted);stroke-dasharray:3 4;stroke-width:2}
   <button class="who" id="who" data-act="who" hidden></button>
 </header>
 <main id="app"></main>
+<input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
 <div id="toast" role="status"></div>
 
 <script>
 /* ===== 設定 =====
  * GitHub Pages で使う場合：GASを「ウェブアプリ」としてデプロイしたURLを入れてください。
  * （GAS単体で使う場合は空欄のままでOK） */
-const API_URL = 'https://script.google.com/macros/s/AKfycbyCEXQWsgX8u6Pbnjn2r4hGNUOfXQHM6-KVBo05-Cbe_d5IckuVWmyWUF6s2vuXdfMl6g/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwyzMypAaE6KVW9GC7blesGNCQT2jEyOPvDZO3yaAY9y-lFR5o3BbnG0lJvUCFisUeoDA/exec';
 
 const IS_GAS = typeof google !== 'undefined' && google.script && google.script.run;
 const app = document.getElementById('app');
@@ -233,7 +257,7 @@ const app = document.getElementById('app');
 /* ---------- 端末保存 ---------- */
 const store = {
   get(k, d) { try { const v = localStorage.getItem('rnd_' + k); return v ? JSON.parse(v) : d; } catch (_) { return d; } },
-  set(k, v) { try { localStorage.setItem('rnd_' + k, JSON.stringify(v)); } catch (_) {} }
+  set(k, v) { try { localStorage.setItem('rnd_' + k, JSON.stringify(v)); return true; } catch (_) { return false; } }
 };
 
 const S = {
@@ -250,6 +274,7 @@ const THEMES = {
   light: [SVG('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>'), '明るい表示'],
   dark:  [SVG('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>'), '暗い表示']
 };
+const CAM = SVG('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>');
 let theme = store.get('theme', 'auto');
 function applyTheme() {
   if (theme === 'auto') delete document.documentElement.dataset.theme;
@@ -328,11 +353,14 @@ function call(action, payload = {}) {
  *  ・通信できなければ端末に残して自動で再送
  * ======================================================= */
 const OB = { ops: store.get('outbox', []), busy: false, timer: null };
+const SENT = [];
 OB.ops.forEach(o => delete o.inflight);
 // 旧バージョンの未送信データを引き継ぐ
 store.get('queue', []).forEach(j => OB.ops.push({ id: 'old' + Math.random(), type: 'save', date: j.date, user: j.user, note: j.note || '', records: j.records }));
 store.set('queue', []);
-const saveOutbox = () => store.set('outbox', OB.ops.map(({ inflight, ...o }) => o));
+const saveOutbox = () => {
+  if (!store.set('outbox', OB.ops.map(({ inflight, ...o }) => o))) toast('端末の保存容量が足りません。通信できる場所で開き直してください');
+};
 
 function enqueue(op) {
   op.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -341,7 +369,7 @@ function enqueue(op) {
     const k = OB.ops.findIndex(o => !o.inflight && o.type === 'save' && o.date === op.date &&
       o.records.length === 1 && o.records[0].item_id === op.item_id);
     if (k >= 0) { OB.ops.splice(k, 1); saveOutbox(); applyOp(op); updateSync(); return; }
-  } else {
+  } else if (op.type === 'save') {
     OB.ops = OB.ops.filter(o => !(!o.inflight && o.type === 'delete' && o.date === op.date && op.records.some(r => r.item_id === o.item_id)));
   }
   OB.ops.push(op); saveOutbox(); applyOp(op);
@@ -352,7 +380,7 @@ function applyOp(op) {
   if (!S.data || op.date !== S.date) return;
   if (op.type === 'save') {
     op.records.forEach(r => { const it = findItem(r.item_id); if (it) it.today = { value: r.value, user: op.user }; });
-  } else {
+  } else if (op.type === 'delete') {
     const it = findItem(op.item_id); if (it) it.today = null;
   }
 }
@@ -363,12 +391,17 @@ function kick(delay) { clearTimeout(OB.timer); OB.timer = setTimeout(drain, dela
 async function drain() {
   if (OB.busy || !OB.ops.length) return;
   OB.busy = true;
-  const batch = OB.ops.slice(0, 30);
+  // 写真は1枚ずつ、記録はまとめて送る
+  let batch = [];
+  if (OB.ops[0].type === 'photo') batch = [OB.ops[0]];
+  else for (const o of OB.ops) { if (o.type === 'photo' || batch.length >= 30) break; batch.push(o); }
   batch.forEach(o => o.inflight = true);
   updateSync();
   try {
     const res = await call('sync', { ops: batch.map(({ inflight, ...o }) => o) });
     OB.ops = OB.ops.filter(o => !batch.includes(o));
+    batch.filter(o => o.type === 'photo').forEach(o => SENT.push(o));   // 送信済みの写真はこの端末ではそのまま表示し続ける
+    if (batch.some(o => o.type === 'photo') && (S.view === 'entry' || S.view === 'home')) render();   // 「未送信」の表示を消す
     saveOutbox();
     const failed = res.results.filter(r => !r.ok);
     if (failed.length) { toast('保存できなかった記録があります：' + failed[0].error); scheduleRefresh(0); }
@@ -419,7 +452,7 @@ function fromCache() {
   const c = store.get('cache', null);
   if (!c) return null;
   if (c.date === S.date) return c;
-  return Object.assign({}, c, { date: S.date, items: c.items.map(i => Object.assign({}, i, {
+  return Object.assign({}, c, { date: S.date, photos: [], items: c.items.map(i => Object.assign({}, i, {
     previous: i.today && c.date < S.date ? { date: c.date, value: i.today.value } : i.previous, today: null })) });
 }
 
@@ -480,8 +513,9 @@ function renderHome() {
     <div class="ptext num">${done} / ${items.length} 項目</div>
     ${S.error ? `<div class="banner err">${esc(S.error)}</div>` : ''}
     ${!S.data ? `<p class="muted">${S.loading ? '読み込んでいます…' : '表示できるデータがありません'}</p>` : `
-    <h2>病棟ラウンド　タップで完了</h2>
+    <div class="h2row"><h2>病棟ラウンド　タップで完了</h2><button class="campill" data-act="photo" data-loc="病棟ラウンド" data-id="">${CAM}写真</button></div>
     <div class="wards">${wards.map(wardTile).join('')}</div>
+    ${thumbsHtml('病棟ラウンド', 'mini-t')}
     <h2>血液ガス分析装置</h2>
     <div class="list">${locations().map(([loc, its]) => bgRow(loc, its)).join('')}</div>`}`;
 }
@@ -514,9 +548,80 @@ function bgRow(loc, its) {
   };
   // SC（期限＋残回数）／溶液（期限＋残回数）／記録紙 … のように1つずつまとめる
   const minis = groups(its).map(g => `<span class="mini"><em>${esc(g.key !== null ? shortName(g.key) : g.items[0].i.item_name)}</em>${g.items.map(x => part(x.i)).join('')}</span>`).join('');
+  const pics = photosFor(loc).length;
   return `<button class="row ${level}" data-act="entry" data-loc="${esc(loc)}">
-    <div class="row-top"><b>${esc(loc)}</b><span class="model">${esc(its[0].model)}</span>${chip}<span class="chev">›</span></div>
+    <div class="row-top"><b>${esc(loc)}</b><span class="model">${esc(its[0].model)}</span>${pics ? `<span class="chip pic">写真 ${pics}</span>` : ''}${chip}<span class="chev">›</span></div>
     <div class="minis num">${minis}</div></button>`;
+}
+
+/* ---- 写真 ---- */
+function photosFor(loc) {
+  const server = ((S.data && S.data.photos) || []).filter(p => p.location === loc)
+    .map(p => { const mine = SENT.find(o => o.id === p.photo_id);
+      return { key: p.file_id, file_id: mine ? '' : p.file_id, src: mine ? 'data:image/jpeg;base64,' + mine.data : '', name: p.item_name, user: p.user, time: p.time }; });
+  const ids = new Set(((S.data && S.data.photos) || []).map(p => p.photo_id));
+  const local = SENT.filter(o => !ids.has(o.id)).map(o => Object.assign({}, o, { sent: true }))
+    .concat(OB.ops.filter(o => o.type === 'photo'))
+    .filter(o => o.date === S.date && o.location === loc)
+    .map(o => ({ key: o.id, src: 'data:image/jpeg;base64,' + o.data, name: o.item_name, user: o.user, pending: !o.sent }));
+  return server.concat(local);
+}
+function thumbsHtml(loc, cls) {
+  const pics = photosFor(loc);
+  if (!pics.length) return '';
+  pics.forEach(p => { if (p.file_id && !THUMBS[p.file_id]) loadThumb(p.file_id); });
+  return `<div class="thumbs ${cls || ''}">${pics.map(p => `<button class="thumb" data-act="view" data-loc="${esc(loc)}" data-key="${esc(p.key)}">
+    <img ${p.src ? `src="${p.src}"` : `data-fid="${esc(p.file_id)}" ${THUMBS[p.file_id] && THUMBS[p.file_id] !== 'loading' ? `src="${THUMBS[p.file_id]}"` : ''}`} alt="">
+    ${p.pending ? '<em>未送信</em>' : ''}<span>${esc(p.name)}</span></button>`).join('')}</div>`;
+}
+const THUMBS = {};
+function loadThumb(id) {
+  if (THUMBS[id]) return;
+  THUMBS[id] = 'loading';
+  call('photo', { file_id: id }).then(r => {
+    THUMBS[id] = r.data;
+    document.querySelectorAll(`img[data-fid="${id}"]`).forEach(img => img.src = r.data);
+  }).catch(() => { delete THUMBS[id]; });
+}
+/* 撮った写真を縮小（長辺1280px・JPEG）。通信量と端末の保存容量を抑える */
+function compress(file) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const r = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.72).split(',')[1]);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('画像を読み込めませんでした')); };
+    img.src = url;
+  });
+}
+const PT = { loc: '', id: '' };
+document.getElementById('photoInput').addEventListener('change', async ev => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!f) return;
+  try {
+    const data = await compress(f);
+    const it = PT.id ? findItem(PT.id) : null;
+    const name = it ? (it.category_id === 'ward_round' ? it.location : dispName(it.item_name)) : (PT.loc === '病棟ラウンド' ? '病棟ラウンド' : '（装置全体）');
+    enqueue({ type: 'photo', date: S.date, user: S.user, location: PT.loc, item_id: PT.id, item_name: name, note: '', data });
+    toast('写真を保存しました');
+    render();
+  } catch (e) { toast(e.message); }
+});
+function viewPhoto(loc, key) {
+  const p = photosFor(loc).find(x => x.key === key);
+  if (!p) return;
+  const src = p.src || (THUMBS[p.file_id] !== 'loading' && THUMBS[p.file_id]) || '';
+  const v = document.createElement('div');
+  v.className = 'viewer';
+  v.innerHTML = `<button aria-label="閉じる">×</button>${src ? `<img src="${src}" alt="">` : '<p>読み込み中…</p>'}<p>${esc(p.name)}　${esc(p.user || '')} ${esc(p.time || '')}${p.pending ? '（未送信）' : ''}</p>`;
+  v.addEventListener('click', () => v.remove());
+  document.body.appendChild(v);
 }
 
 /* ---- 入力画面（1台＝1画面、全項目を並べる） ---- */
@@ -566,6 +671,10 @@ function renderEntry() {
     <div class="entry-head"><button class="back" data-act="leave">‹ 一覧</button><h2>${esc(S.loc)}<small>${esc(its[0].model)}</small></h2></div>
     <p class="sub-head">${fmtJP(S.date)}　${esc(S.user)}　<span class="ghost">薄い文字は前回の記録</span></p>
     ${html}
+    <section class="photos">
+      <div class="photos-h"><b>写真</b><button class="addpic" data-act="photo" data-loc="${esc(S.loc)}" data-id="">${CAM}写真を追加</button></div>
+      ${thumbsHtml(S.loc) || '<p class="muted" style="font-size:13px;margin:0">見た目に異常があれば撮影してください。✗ を付けた項目には撮影ボタンが出ます。</p>'}
+    </section>
     <div class="notebox"><textarea id="f-note" rows="1" placeholder="メモ（任意）例：SC交換、記録紙補充">${esc(S.note)}</textarea></div>
     ${hasCount ? '<button class="linkbtn" data-act="chart">残回数の推移を見る ›</button>' : ''}
     ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" ${reqMissing.length || !n ? 'disabled' : ''}>${esc(saveLabel)}</button></div>`}`;
@@ -606,7 +715,7 @@ function boolRow(i) {
     <div class="seg">
       <button class="y ${v === true ? 'sel' : ''}" data-act="bool" data-id="${esc(i.item_id)}" data-v="1">✓ OK</button>
       <button class="n ${v === false ? 'sel' : ''}" data-act="bool" data-id="${esc(i.item_id)}" data-v="0">✗</button>
-    </div></div>`;
+    </div>${v === false ? `<button class="cam" data-act="photo" data-loc="${esc(i.location)}" data-id="${esc(i.item_id)}" aria-label="写真を撮る">${CAM}</button>` : ''}</div>`;
 }
 
 function keypadSheet() {
@@ -802,6 +911,12 @@ document.addEventListener('click', ev => {
     S.apiUrl = u; store.set('apiUrl', u); S.view = 'who'; load();
   }
   else if (act === 'who') { S.view = 'who'; render(); }
+  else if (act === 'photo') {
+    const n = document.getElementById('f-note'); if (n) S.note = n.value;
+    PT.loc = b.dataset.loc; PT.id = b.dataset.id || '';
+    document.getElementById('photoInput').click();
+  }
+  else if (act === 'view') viewPhoto(b.dataset.loc, b.dataset.key);
   else if (act === 'home') { S.view = 'home'; render(); window.scrollTo(0, 0); load(true); }
   else if (act === 'theme') {
     theme = theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto';
