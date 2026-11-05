@@ -210,6 +210,8 @@ h2{font-size:14px;margin:16px 2px 6px;color:var(--muted);font-weight:600}
 .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
 .keypad button{background:var(--key);height:56px;border-radius:12px;font-size:25px;font-weight:600}
 .keypad button:active{background:var(--line)}
+.keypad button{touch-action:manipulation;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:transform .06s,background .06s}
+.keypad button.down{background:var(--line);transform:scale(.95)}
 
 /* グラフ */
 .chartbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
@@ -738,7 +740,7 @@ function keypadSheet() {
       <button data-act="same" ${i.previous ? '' : 'disabled'}>前回と同じ</button>
       <button class="go" data-act="nextField">${nextTarget ? '次へ' : '完了'}</button></div>
     <div class="hint ${cls}">${esc(hint)}</div>
-    <div class="keypad">${['7', '8', '9', '4', '5', '6', '1', '2', '3', 'C', '0', '⌫'].map(k =>
+    <div class="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k =>
       `<button data-act="key" data-k="${k}" aria-label="${k === '⌫' ? '1文字消す' : k === 'C' ? 'クリア' : k}">${k}</button>`).join('')}</div>
   </div></div>`;
 }
@@ -1021,6 +1023,28 @@ else {
   S.data = fromCache(); if (S.data) OB.ops.forEach(applyOp);
   S.view = 'who'; render(); load(true); kick(0);
 }
+
+/* =========================================================
+ * テンキーの反応を良くする（2026/11）
+ *  ・指が触れた瞬間（pointerdown）に入力し、指を離すのを待たない
+ *  ・そのあと来る本物のクリックは二重入力にならないよう捨てる
+ *  ・キーボードの Enter など、タッチ以外のクリックはそのまま受ける
+ * ======================================================= */
+let lastKeyDown = 0;
+document.addEventListener('pointerdown', ev => {
+  const b = ev.target.closest('.keypad [data-act="key"]');
+  if (!b || b.disabled) return;
+  ev.preventDefault();
+  lastKeyDown = Date.now();
+  const k = b.dataset.k;
+  b.click();   // 既存のクリック処理で入力する
+  const nb = document.querySelector('.keypad [data-k="' + CSS.escape(k) + '"]');
+  if (nb) { nb.classList.add('down'); setTimeout(() => nb.classList.remove('down'), 110); }
+});
+document.addEventListener('click', ev => {
+  if (!ev.isTrusted || Date.now() - lastKeyDown > 700) return;
+  if (ev.target.closest && ev.target.closest('.keypad')) { ev.stopImmediatePropagation(); ev.preventDefault(); }
+}, true);
 </script>
 </body>
 </html>
