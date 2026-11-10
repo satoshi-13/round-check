@@ -186,6 +186,17 @@ h2{font-size:14px;margin:16px 2px 6px;color:var(--muted);font-weight:600}
 .thumb span{position:absolute;left:0;right:0;bottom:0;font-size:10.5px;line-height:1.25;padding:3px 5px;background:rgba(10,20,30,.62);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
 .thumb em{position:absolute;top:4px;right:4px;font-style:normal;font-size:10px;background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:0 5px;font-weight:700}
 .chip.pic{background:var(--accent-soft);color:var(--accent)}
+.lg-day{font-size:13px;font-weight:700;color:var(--muted);margin:14px 2px 6px}
+.lg{display:flex;gap:10px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px}
+.lg .pic{width:84px;height:84px;flex:none;border-radius:10px;overflow:hidden;background:var(--empty);border:1px solid var(--line);padding:0;display:grid;place-items:center;color:var(--faint);font-size:11px}
+.lg .pic img{width:100%;height:100%;object-fit:cover;display:block}
+.lg .memo-ic{width:40px;height:40px;flex:none;border-radius:10px;background:var(--accent-soft, #e2f3f4);display:grid;place-items:center;color:var(--accent)}
+.lg .memo-ic svg{width:22px;height:22px}
+.lg .tx{flex:1;min-width:0}
+.lg .tx b{display:block;font-size:15px;line-height:1.3}
+.lg .tx small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+.lg .tx p{margin:6px 0 0;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.lg-more{display:block;width:100%;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:700;margin:4px 0 20px}
 .viewer{position:fixed;inset:0;z-index:30;background:rgba(5,10,16,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
 .viewer img{max-width:100%;max-height:78vh;border-radius:8px}
 .viewer p{color:#e5ecf4;font-size:14px;margin:10px 0 0;text-align:center}
@@ -240,6 +251,7 @@ svg .fc{stroke:var(--muted);stroke-dasharray:3 4;stroke-width:2}
   <h1>ラウンド点検表</h1>
   <span id="sync"></span>
   <button class="icon" id="cal" data-act="month" aria-label="月別一覧" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2M8 17.5h2" stroke-width="2.4"/></svg></button>
+  <button class="icon" id="logBtn" data-act="log" aria-label="過去の写真・メモ" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
   <button class="icon" id="theme" data-act="theme"></button>
   <button class="who" id="who" data-act="who" hidden></button>
 </header>
@@ -476,7 +488,8 @@ function render() {
   w.textContent = S.user ? `${S.user} ▾` : '';
   document.getElementById('cal').hidden = !S.user || S.view === 'month' || S.view === 'who';
   app.className = '';
-  ({ url: renderUrl, who: renderWho, home: renderHome, entry: renderEntry, chart: renderChart, month: renderMonth })[S.view]();
+  document.getElementById('logBtn').hidden = !S.user || S.view === 'log' || S.view === 'who';
+  ({ url: renderUrl, who: renderWho, home: renderHome, entry: renderEntry, chart: renderChart, month: renderMonth, log: renderLog })[S.view]();
   updateSync();
 }
 
@@ -667,6 +680,9 @@ function renderEntry() {
 
   let saveLabel = `保存する（${n}/${its.length}）`;
   if (reqMissing.length) saveLabel = `${reqMissing.map(i => i.item_name).join('・')}を入力してください`;
+  // 何も入力していなくても、メモがあれば「メモだけ保存」できる
+  const memoOnly = !n && !!String(S.note || '').trim();
+  if (memoOnly) saveLabel = 'メモだけ保存する';
 
   app.className = S.active ? 'with-sheet' : 'with-bar';
   app.innerHTML = `
@@ -679,7 +695,7 @@ function renderEntry() {
     </section>
     <div class="notebox"><textarea id="f-note" rows="1" placeholder="メモ（任意）例：SC交換、記録紙補充">${esc(S.note)}</textarea></div>
     ${hasCount ? '<button class="linkbtn" data-act="chart">残回数の推移を見る ›</button>' : ''}
-    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" ${reqMissing.length || !n ? 'disabled' : ''}>${esc(saveLabel)}</button></div>`}`;
+    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" id="saveBtn" ${memoOnly ? '' : reqMissing.length || !n ? 'disabled' : ''}>${esc(saveLabel)}</button></div>`}`;
 }
 
 function tile(i, lab) {
@@ -812,6 +828,85 @@ function lineChart(it, pts) {
   return s + '</svg>';
 }
 
+/* ---- 過去の写真・メモ ----
+ *  期間と場所で絞り込み、日ごとに新しい順に表示。写真は押すと大きく表示
+ * ======================================================= */
+const LG = { range: 'month', loc: 'all', kind: 'all', data: null, error: '', shown: 40 };
+const LG_RANGES = [['week', '7日間'], ['month', '今月'], ['last', '先月'], ['3m', '3か月'], ['year', '1年']];
+function lgRange() {
+  const t = todayStr(), [y, m] = t.split('-').map(Number);
+  if (LG.range === 'week') return [shiftDate(t, -6), t];
+  if (LG.range === 'month') return [`${y}-${pad(m)}-01`, t];
+  if (LG.range === 'last') { const a = new Date(y, m - 2, 1), b = new Date(y, m - 1, 0); return [ymdOf(a), ymdOf(b)]; }
+  if (LG.range === '3m') return [ymdOf(new Date(y, m - 3, 1)), t];
+  return [ymdOf(new Date(y - 1, m - 1, 1)), t];
+}
+function ymdOf(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+async function openLog() {
+  LG.data = null; LG.error = ''; LG.shown = 40;
+  S.view = 'log'; render(); window.scrollTo(0, 0);
+  const [from, to] = lgRange(), key = LG.range;
+  try {
+    const d = await call('log', { from, to });
+    if (LG.range !== key) return;
+    LG.data = d;
+  } catch (e) { LG.error = e.server ? e.message : '通信できないため表示できません'; }
+  if (S.view === 'log') render();
+}
+const MEMO_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 12h7M9 16h5"/></svg>';
+function renderLog() {
+  let body = '<p class="muted">読み込んでいます…</p>';
+  if (LG.error) body = `<div class="banner err">${esc(LG.error)}</div>`;
+  else if (LG.data) {
+    // 未送信の写真・メモ（この端末）も先頭に出す
+    const pend = OB.ops.filter(o => o.type === 'photo').map(o => ({ k: 'photo', date: o.date, time: '', location: o.location, item_name: o.item_name, user: o.user, src: 'data:image/jpeg;base64,' + o.data, pending: true }))
+      .concat(OB.ops.filter(o => o.type === 'save' && o.note).map(o => ({ k: 'note', date: o.date, time: '', location: o.location || '', user: o.user, note: o.note, pending: true })));
+    let list = pend.concat(LG.data.photos.map(p => Object.assign({ k: 'photo' }, p)), LG.data.notes.map(n => Object.assign({ k: 'note' }, n)));
+    const locs = [...new Set(list.map(x => x.location).filter(Boolean))];
+    if (LG.loc !== 'all' && !locs.includes(LG.loc)) LG.loc = 'all';
+    if (LG.loc !== 'all') list = list.filter(x => x.location === LG.loc);
+    if (LG.kind !== 'all') list = list.filter(x => x.k === LG.kind);
+    list.sort((a, b) => (b.date + (b.time || '99')) < (a.date + (a.time || '99')) ? -1 : 1);
+    const nP = list.filter(x => x.k === 'photo').length, nN = list.filter(x => x.k === 'note').length;
+    const shown = list.slice(0, LG.shown);
+    shown.forEach(x => { if (x.k === 'photo' && x.file_id && !THUMBS[x.file_id]) loadThumb(x.file_id); });
+    let day = '', html = '';
+    shown.forEach((x, idx) => {
+      if (x.date !== day) { day = x.date; html += `<div class="lg-day">${fmtJP(x.date)}</div>`; }
+      const where = [x.location, x.k === 'photo' ? dispName(x.item_name || '') : ''].filter(Boolean).join('　');
+      const who = [x.time, x.user].filter(Boolean).join('　') + (x.pending ? '　（未送信）' : '');
+      if (x.k === 'photo') {
+        const src = x.src || (THUMBS[x.file_id] && THUMBS[x.file_id] !== 'loading' ? THUMBS[x.file_id] : '');
+        html += `<div class="lg"><button class="pic" data-act="lgview" data-i="${idx}">${src || x.file_id ? `<img ${src ? `src="${src}"` : `data-fid="${esc(x.file_id)}"`} alt="">` : '写真'}</button>
+          <div class="tx"><b>${esc(where || '（場所なし）')}</b><small>${esc(who)}</small>${x.note && !/Driveから再登録/.test(x.note) ? `<p>${esc(x.note)}</p>` : ''}</div></div>`;
+      } else {
+        html += `<div class="lg"><span class="memo-ic">${MEMO_IC}</span><div class="tx"><b>${esc(x.location || '（場所なし）')}</b><small>${esc(who)}</small><p>${esc(x.note)}</p></div></div>`;
+      }
+    });
+    LG.list = shown;
+    body = `<p class="muted" style="font-size:13px;margin:6px 2px 0">写真 ${nP}件・メモ ${nN}件</p>
+      ${list.length ? html : '<p class="muted" style="margin:16px 2px">この期間の写真・メモはありません</p>'}
+      ${list.length > LG.shown ? `<button class="lg-more" data-act="lgmore">さらに表示（残り ${list.length - LG.shown}件）</button>` : ''}`;
+    LG.locs = locs;
+  }
+  const locs = LG.locs || [];
+  app.innerHTML = `
+    <div class="entry-head"><button class="back" data-act="home">‹ ホーム</button><h2>写真・メモ</h2></div>
+    <div class="filters">${LG_RANGES.map(([k, l]) => `<button class="${LG.range === k ? 'on' : ''}" data-act="lgrange" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="filters">${[['all', 'すべて'], ['photo', '写真'], ['note', 'メモ']].map(([k, l]) => `<button class="${LG.kind === k ? 'on' : ''}" data-act="lgkind" data-k="${k}">${l}</button>`).join('')}</div>
+    ${locs.length ? `<div class="filters">${[['all', 'すべての場所'], ...locs.map(l => [l, l])].map(([k, l]) => `<button class="${LG.loc === k ? 'on' : ''}" data-act="lgloc" data-k="${esc(k)}">${esc(l)}</button>`).join('')}</div>` : ''}
+    ${body}`;
+}
+function lgView(i) {
+  const x = (LG.list || [])[i]; if (!x) return;
+  const src = x.src || (THUMBS[x.file_id] !== 'loading' && THUMBS[x.file_id]) || '';
+  const v = document.createElement('div');
+  v.className = 'viewer';
+  v.innerHTML = `<button aria-label="閉じる">×</button>${src ? `<img src="${src}" alt="">` : '<p>読み込み中…</p>'}<p>${esc(fmtJP(x.date))}　${esc(x.location || '')} ${esc(dispName(x.item_name || ''))}　${esc(x.user || '')} ${esc(x.time || '')}</p>`;
+  v.addEventListener('click', () => v.remove());
+  document.body.appendChild(v);
+}
+
 /* ---- 月別一覧 ---- */
 const M = { ym: '', data: null, error: '', filter: 'all' };
 function shiftMonth(ym, n) { const [y, m] = ym.split('-').map(Number); const t = new Date(y, m - 1 + n, 1); return `${t.getFullYear()}-${pad(t.getMonth() + 1)}`; }
@@ -925,6 +1020,12 @@ document.addEventListener('click', ev => {
     store.set('theme', theme); applyTheme(); toast('表示：' + THEMES[theme][1]);
   }
   else if (act === 'month') openMonth(S.date.slice(0, 7));
+  else if (act === 'log') openLog();
+  else if (act === 'lgrange') { LG.range = b.dataset.k; openLog(); }
+  else if (act === 'lgkind') { LG.kind = b.dataset.k; LG.shown = 40; render(); }
+  else if (act === 'lgloc') { LG.loc = b.dataset.k; LG.shown = 40; render(); }
+  else if (act === 'lgmore') { LG.shown += 40; render(); }
+  else if (act === 'lgview') lgView(+b.dataset.i);
   else if (act === 'mprev') openMonth(shiftMonth(M.ym, -1));
   else if (act === 'mnext') openMonth(shiftMonth(M.ym, 1));
   else if (act === 'mfilter') { M.filter = b.dataset.k; render(); scrollToToday(); }
@@ -997,14 +1098,25 @@ document.addEventListener('click', ev => {
   else if (act === 'save') {
     const note = document.getElementById('f-note').value.trim();
     const records = S.items.filter(i => draftValue(i) !== null).map(i => ({ item_id: i.item_id, value: draftValue(i) }));
-    enqueue({ type: 'save', date: S.date, user: S.user, note, records });
+    if (!records.length && !note) { S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0); return; }
+    enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note, records });
     const loc = S.loc;
     S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0);
     toast(`${loc} を保存しました`);
   }
 });
 
-document.addEventListener('input', ev => { if (ev.target.id === 'f-note') { S.note = ev.target.value; S.dirty = true; } });
+document.addEventListener('input', ev => {
+  if (ev.target.id !== 'f-note') return;
+  S.note = ev.target.value; S.dirty = true;
+  // 何も入力していない場所でメモを書いたら「メモだけ保存」を押せるようにする（画面は描き直さない）
+  const btn = document.getElementById('saveBtn');
+  if (btn && S.view === 'entry' && !S.items.some(i => draftValue(i) !== null)) {
+    const has = !!S.note.trim();
+    btn.disabled = !has;
+    btn.textContent = has ? 'メモだけ保存する' : `保存する（0/${S.items.length}）`;
+  }
+});
 
 /* 日付をまたいで開き直したら今日に戻す / 通信が戻ったら再送 */
 document.addEventListener('visibilitychange', () => {
