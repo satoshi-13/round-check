@@ -208,6 +208,7 @@ h2{font-size:14px;margin:16px 2px 6px;color:var(--muted);font-weight:600}
 
 .savebar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
   padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px)}
+.savebar button.done{background:var(--surface);color:var(--accent);border:2px solid var(--accent)}
 .savebar button{display:block;width:100%;max-width:536px;margin:0 auto;height:56px;border-radius:14px;background:var(--accent);color:var(--on-accent);font-size:18px;font-weight:700}
 
 /* テンキー（下から出る） */
@@ -678,9 +679,9 @@ function viewPhoto(loc, key) {
 
 /* ---- 入力画面（1台＝1画面、全項目を並べる） ---- */
 function openEntry(loc) {
-  S.loc = loc; S.note = ''; S.active = null; S.dirty = false; S.draft = {};
+  S.loc = loc; S.note = ''; S.noteSaved = ''; S.active = null; S.dirty = false; S.draft = {}; S.saved = {};
   S.items = S.data.items.filter(i => i.category_id === 'blood_gas' && i.location === loc);
-  S.items.forEach(i => { if (i.today) S.draft[i.item_id] = toDraft(i, i.today.value); });
+  S.items.forEach(i => { if (i.today) { S.draft[i.item_id] = toDraft(i, i.today.value); S.saved[i.item_id] = JSON.stringify(draftValue(i)); } });
   S.view = 'entry'; render(); window.scrollTo(0, 0);
 }
 function toDraft(i, v) { return i.input_type === 'number' ? String(v) : i.input_type === 'date' ? isoToMMDD(v) : v; }
@@ -715,16 +716,14 @@ function renderEntry() {
     ? `<section class="grp"><h3>${esc(g.name)}</h3><div class="tiles">${g.items.map(x => tile(x.i, x.lab)).join('')}</div></section>`
     : boolRow(g.items[0].i)).join('');
 
-  let saveLabel = `保存する（${n}/${its.length}）`;
-  if (reqMissing.length) saveLabel = `${reqMissing.map(i => i.item_name).join('・')}を入力してください`;
-  // 何も入力していなくても、メモがあれば「メモだけ保存」できる
-  const memoOnly = !n && !!String(S.note || '').trim();
-  if (memoOnly) saveLabel = 'メモだけ保存する';
+  const noteChanged = String(S.note || '').trim() !== (S.noteSaved || '');
+  let saveLabel = noteChanged ? `メモを登録して一覧へ（${n}/${its.length}）` : `入力済み ${n}/${its.length}　一覧へ戻る`;
+  if (reqMissing.length && !noteChanged) saveLabel = `${reqMissing.map(i => i.item_name).join('・')}が未入力（${n}/${its.length}）`;
 
   app.className = S.active ? 'with-sheet' : 'with-bar';
   app.innerHTML = `
     <div class="entry-head"><button class="back" data-act="leave">‹ 一覧</button><h2>${esc(S.loc)}<small>${esc(its[0].model)}</small></h2></div>
-    <p class="sub-head">${fmtJP(S.date)}　${esc(S.user)}　<span class="ghost">薄い文字は前回の記録</span></p>
+    <p class="sub-head">${fmtJP(S.date)}　${esc(S.user)}　<span class="ghost">入力するとすぐ登録されます。薄い文字は前回の記録</span></p>
     ${html}
     <section class="photos">
       <div class="photos-h"><b>写真</b><button class="addpic" data-act="photo" data-loc="${esc(S.loc)}" data-id="">${CAM}写真を追加</button></div>
@@ -732,7 +731,7 @@ function renderEntry() {
     </section>
     <div class="notebox"><textarea id="f-note" rows="1" placeholder="メモ（任意）例：SC交換、記録紙補充">${esc(S.note)}</textarea></div>
     ${hasCount ? '<button class="linkbtn" data-act="chart">残回数の推移を見る ›</button>' : ''}
-    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" id="saveBtn" ${memoOnly ? '' : reqMissing.length || !n ? 'disabled' : ''}>${esc(saveLabel)}</button></div>`}`;
+    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" id="saveBtn" class="${noteChanged ? '' : 'done'}">${esc(saveLabel)}</button></div>`}`;
 }
 
 function tile(i, lab) {
@@ -802,7 +801,46 @@ function nextField(i) {
   const list = S.items.filter(x => x.input_type !== 'boolean');
   return list[list.indexOf(i) + 1] || null;
 }
+/* =========================================================
+ * 自動保存（医療ガス点検と同じ）
+ *  ・✓／✗：押した時点で登録
+ *  ・期限・残回数：テンキーで「次へ」「完了」・前回と同じ・別の欄に移ったとき（期限は4桁そろったとき）に登録
+ *  ・値を消したときは、その日の記録を取り消す
+ *  ・メモは一覧へ戻るときに登録
+ * ======================================================= */
+function autosave(id) {
+  const i = findLocal(id); if (!i) return;
+  const v = draftValue(i);
+  const raw = S.draft[id];
+  if (v !== null) {
+    const ser = JSON.stringify(v);
+    if (S.saved[id] === ser) return;
+    enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note: S.note.trim(), records: [{ item_id: id, value: v }] });
+    S.saved[id] = ser;
+  } else if ((raw === '' || raw === undefined) && S.saved[id] !== undefined) {
+    enqueue({ type: 'delete', date: S.date, item_id: id });
+    delete S.saved[id];
+  } else if (i.input_type === 'date' && raw) {
+    toast(`${dispName(i.item_name)}：日付が正しくないため登録していません`);
+  }
+}
+function finishEntry() {
+  if (S.active) { autosave(S.active); S.active = null; }
+  const el = document.getElementById('f-note'); if (el) S.note = el.value;
+  const note = S.note.trim();
+  const reqMissing = S.items.filter(i => i.required && draftValue(i) === null);
+  if (reqMissing.length && !confirm(`${reqMissing.map(i => i.item_name).join('・')}が未入力です。一覧へ戻りますか？`)) { renderEntry(); return; }
+  if (note !== (S.noteSaved || '')) {
+    // メモを書き換えたときは、入力済みの全項目にメモを付け直す（メモだけでも登録できる）
+    const records = S.items.filter(i => draftValue(i) !== null).map(i => ({ item_id: i.item_id, value: draftValue(i) }));
+    enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note, records });
+    S.noteSaved = note;
+    toast(`${S.loc} のメモを登録しました`);
+  }
+  S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0);
+}
 function setActive(id) {
+  if (S.active && S.active !== id) autosave(S.active);
   S.sheetAnim = !S.active && !!id;
   S.active = id; renderEntry();
   if (id) { const el = document.getElementById('t-' + id); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
@@ -810,6 +848,7 @@ function setActive(id) {
 
 /* ---- 残回数の推移 ---- */
 async function openChart() {
+  if (S.active) { autosave(S.active); S.active = null; }
   S.note = (document.getElementById('f-note') || {}).value || S.note;
   S.view = 'chart'; S.chart = null; S.active = null; render(); window.scrollTo(0, 0);
   const its = S.items.filter(i => i.input_type === 'number');
@@ -1099,13 +1138,13 @@ document.addEventListener('click', ev => {
   }
 
   else if (act === 'entry') openEntry(b.dataset.loc);
-  else if (act === 'leave') {
-    if (S.dirty && !confirm('保存せずに一覧へ戻りますか？')) return;
-    S.view = 'home'; S.active = null; render();
-  }
+  else if (act === 'leave') finishEntry();
   else if (act === 'field') setActive(S.active === b.dataset.id ? null : b.dataset.id);
   else if (act === 'bool') {
-    S.draft[b.dataset.id] = b.dataset.v === '1'; S.dirty = true; S.active = null; renderEntry();
+    if (S.active) { autosave(S.active); S.active = null; }
+    S.draft[b.dataset.id] = b.dataset.v === '1'; S.dirty = true;
+    autosave(b.dataset.id);   // ✓／✗は押した時点で登録
+    renderEntry();
   }
   else if (act === 'key') {
     const i = findLocal(S.active);
@@ -1131,27 +1170,27 @@ document.addEventListener('click', ev => {
   else if (act === 'chart') openChart();
   else if (act === 'backEntry') { S.view = 'entry'; render(); }
 
-  /* 保存：即座に一覧へ戻り、送信は裏で */
-  else if (act === 'save') {
-    const note = document.getElementById('f-note').value.trim();
-    const records = S.items.filter(i => draftValue(i) !== null).map(i => ({ item_id: i.item_id, value: draftValue(i) }));
-    if (!records.length && !note) { S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0); return; }
-    enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note, records });
-    const loc = S.loc;
-    S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0);
-    toast(`${loc} を保存しました`);
-  }
+  /* 一覧へ戻る（入力は自動で登録済み。メモを書き換えていればここで登録） */
+  else if (act === 'save') finishEntry();
 });
 
+/* メモ欄を押したら、テンキーを閉じて（入力中の欄は登録して）メモを書けるようにする */
+document.addEventListener('focusin', ev => {
+  if (ev.target.id !== 'f-note' || S.view !== 'entry' || !S.active) return;
+  autosave(S.active); S.active = null; renderEntry();
+  const el = document.getElementById('f-note');
+  if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+});
 document.addEventListener('input', ev => {
   if (ev.target.id !== 'f-note') return;
   S.note = ev.target.value; S.dirty = true;
-  // 何も入力していない場所でメモを書いたら「メモだけ保存」を押せるようにする（画面は描き直さない）
+  // メモを書き換えたら、下のボタンを「メモを登録して一覧へ」にする（画面は描き直さない）
   const btn = document.getElementById('saveBtn');
-  if (btn && S.view === 'entry' && !S.items.some(i => draftValue(i) !== null)) {
-    const has = !!S.note.trim();
-    btn.disabled = !has;
-    btn.textContent = has ? 'メモだけ保存する' : `保存する（0/${S.items.length}）`;
+  if (btn && S.view === 'entry') {
+    const n = S.items.filter(i => draftValue(i) !== null).length;
+    const changed = S.note.trim() !== (S.noteSaved || '');
+    btn.classList.toggle('done', !changed);
+    btn.textContent = changed ? `メモを登録して一覧へ（${n}/${S.items.length}）` : `入力済み ${n}/${S.items.length}　一覧へ戻る`;
   }
 });
 
