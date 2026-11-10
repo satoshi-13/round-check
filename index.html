@@ -6,6 +6,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ラウンド点検表">
 <meta name="theme-color" content="#0e5c66">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>ラウンド点検表</title>
 <script>try{var t=JSON.parse(localStorage.getItem('rnd_theme')||'"auto"');if(t!=='auto')document.documentElement.dataset.theme=t;}catch(e){}</script>
 <style>
@@ -366,15 +370,48 @@ function call(action, payload = {}) {
  *  ・操作はまず端末の送信箱に入れて画面に即反映 → 裏でまとめて送信
  *  ・通信できなければ端末に残して自動で再送
  * ======================================================= */
-const OB = { ops: store.get('outbox', []), busy: false, timer: null };
+const OB = { ops: [], busy: false, timer: null };
 const SENT = [];
-OB.ops.forEach(o => delete o.inflight);
-// 旧バージョンの未送信データを引き継ぐ
-store.get('queue', []).forEach(j => OB.ops.push({ id: 'old' + Math.random(), type: 'save', date: j.date, user: j.user, note: j.note || '', records: j.records }));
-store.set('queue', []);
-const saveOutbox = () => {
-  if (!store.set('outbox', OB.ops.map(({ inflight, ...o }) => o))) toast('端末の保存容量が足りません。通信できる場所で開き直してください');
+/* 一時保存の場所：IndexedDB（数百MB。数日分の記録と写真をためられる）。使えない端末では localStorage（約5MB） */
+const IDB = {
+  db: null,
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((res, rej) => {
+      if (!window.indexedDB) return rej(new Error('no idb'));
+      const r = indexedDB.open('rnd_store', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(true); t.onerror = () => rej(t.error); }); }
 };
+let useIdb = true;
+async function loadOutbox() {
+  let ops = null;
+  try { ops = await IDB.get('outbox'); } catch (e) { useIdb = false; }
+  ops = ops || [];
+  // 以前の版で localStorage にたまっていた分（outbox・さらに古い queue）も引き継ぐ
+  const old = store.get('outbox', []);
+  store.get('queue', []).forEach(j => old.push({ id: 'old' + Math.random(), type: 'save', date: j.date, user: j.user, note: j.note || '', records: j.records }));
+  old.forEach(o => { if (!ops.some(x => x.id === o.id)) ops.push(o); });
+  if (useIdb && old.length) { try { localStorage.removeItem('rnd_outbox'); localStorage.removeItem('rnd_queue'); } catch (e) { } }
+  ops.forEach(o => delete o.inflight);
+  OB.ops = ops;
+  if (old.length) saveOutbox();
+}
+let saveChain = Promise.resolve();
+function saveOutbox() {
+  const data = OB.ops.map(({ inflight, ...o }) => o);
+  if (useIdb) {
+    saveChain = saveChain.then(() => IDB.set('outbox', data)).catch(() => {
+      useIdb = false;
+      if (!store.set('outbox', data)) toast('端末の保存容量が足りません。通信できる場所で開き直してください');
+    });
+  } else if (!store.set('outbox', data)) toast('端末の保存容量が足りません。通信できる場所で開き直してください');
+}
 
 function enqueue(op) {
   op.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -433,7 +470,7 @@ async function drain() {
 function updateSync() {
   const el = document.getElementById('sync');
   const n = OB.ops.length;
-  el.textContent = !n ? '' : (navigator.onLine === false ? `未送信 ${n}件` : '送信中…');
+  el.textContent = navigator.onLine === false ? (n ? `オフライン・未送信 ${n}件` : 'オフライン') : (n ? '送信中…' : '');
 }
 
 /* 送信が終わったら、他の人の入力や予測を取り込む（入力中は邪魔しない） */
@@ -1130,11 +1167,20 @@ window.addEventListener('online', () => kick(0));
 window.addEventListener('offline', updateSync);
 
 /* 起動：キャッシュで即表示 → 裏で最新を取得。毎回、点検者の選択から */
-if (!IS_GAS && !S.apiUrl) { S.view = 'url'; render(); }
-else {
-  S.data = fromCache(); if (S.data) OB.ops.forEach(applyOp);
-  S.view = 'who'; render(); load(true); kick(0);
+(async () => {
+  await loadOutbox();
+  if (!IS_GAS && !S.apiUrl) { S.view = 'url'; render(); }
+  else {
+    S.data = fromCache(); if (S.data) OB.ops.forEach(applyOp);
+    S.view = 'who'; render(); load(true); kick(0);
+  }
+})();
+
+/* 画面を端末に保存して、電波がなくても開けるようにする（GitHub Pages など https のときだけ） */
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !IS_GAS) {
+  navigator.serviceWorker.register('sw.js').catch(() => { });
 }
+if (navigator.storage && navigator.storage.persist) { navigator.storage.persist().catch(() => { }); }
 
 /* =========================================================
  * テンキーの反応を良くする（2026/11）
