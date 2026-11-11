@@ -717,7 +717,7 @@ function renderEntry() {
     : boolRow(g.items[0].i)).join('');
 
   const noteChanged = String(S.note || '').trim() !== (S.noteSaved || '');
-  let saveLabel = noteChanged ? `メモを登録して一覧へ（${n}/${its.length}）` : `入力済み ${n}/${its.length}　一覧へ戻る`;
+  let saveLabel = `入力済み ${n}/${its.length}　一覧へ戻る`;
   if (reqMissing.length && !noteChanged) saveLabel = `${reqMissing.map(i => i.item_name).join('・')}が未入力（${n}/${its.length}）`;
 
   app.className = S.active ? 'with-sheet' : 'with-bar';
@@ -731,7 +731,7 @@ function renderEntry() {
     </section>
     <div class="notebox"><textarea id="f-note" rows="1" placeholder="メモ（任意）例：SC交換、記録紙補充">${esc(S.note)}</textarea></div>
     ${hasCount ? '<button class="linkbtn" data-act="chart">残回数の推移を見る ›</button>' : ''}
-    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" id="saveBtn" class="${noteChanged ? '' : 'done'}">${esc(saveLabel)}</button></div>`}`;
+    ${S.active ? keypadSheet() : `<div class="savebar"><button data-act="save" id="saveBtn" class="done">${esc(saveLabel)}</button></div>`}`;
 }
 
 function tile(i, lab) {
@@ -824,19 +824,21 @@ function autosave(id) {
     toast(`${dispName(i.item_name)}：日付が正しくないため登録していません`);
   }
 }
+/* メモを書き換えていれば登録（入力済みの全項目にメモを付け直す。メモだけでも登録できる） */
+function saveNoteIfChanged() {
+  const el = document.getElementById('f-note'); if (el) S.note = el.value;
+  const note = String(S.note || '').trim();
+  if (note === (S.noteSaved || '')) return false;
+  const records = S.items.filter(i => draftValue(i) !== null).map(i => ({ item_id: i.item_id, value: draftValue(i) }));
+  enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note, records });
+  S.noteSaved = note;
+  return true;
+}
 function finishEntry() {
   if (S.active) { autosave(S.active); S.active = null; }
-  const el = document.getElementById('f-note'); if (el) S.note = el.value;
-  const note = S.note.trim();
   const reqMissing = S.items.filter(i => i.required && draftValue(i) === null);
   if (reqMissing.length && !confirm(`${reqMissing.map(i => i.item_name).join('・')}が未入力です。一覧へ戻りますか？`)) { renderEntry(); return; }
-  if (note !== (S.noteSaved || '')) {
-    // メモを書き換えたときは、入力済みの全項目にメモを付け直す（メモだけでも登録できる）
-    const records = S.items.filter(i => draftValue(i) !== null).map(i => ({ item_id: i.item_id, value: draftValue(i) }));
-    enqueue({ type: 'save', date: S.date, user: S.user, location: S.loc, note, records });
-    S.noteSaved = note;
-    toast(`${S.loc} のメモを登録しました`);
-  }
+  if (saveNoteIfChanged()) toast(`${S.loc} のメモを登録しました`);
   S.view = 'home'; S.active = null; S.dirty = false; render(); window.scrollTo(0, 0);
 }
 function setActive(id) {
@@ -1174,6 +1176,14 @@ document.addEventListener('click', ev => {
   else if (act === 'save') finishEntry();
 });
 
+/* メモは書き終えて欄から離れたときに登録（保存ボタンは不要） */
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'f-note' && S.view === 'entry' && saveNoteIfChanged()) toast('メモを登録しました');
+});
+/* アプリを閉じる・切り替えるときも、入力中の欄とメモを登録しておく */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && S.view === 'entry') { if (S.active) autosave(S.active); saveNoteIfChanged(); }
+});
 /* メモ欄を押したら、テンキーを閉じて（入力中の欄は登録して）メモを書けるようにする */
 document.addEventListener('focusin', ev => {
   if (ev.target.id !== 'f-note' || S.view !== 'entry' || !S.active) return;
@@ -1184,14 +1194,7 @@ document.addEventListener('focusin', ev => {
 document.addEventListener('input', ev => {
   if (ev.target.id !== 'f-note') return;
   S.note = ev.target.value; S.dirty = true;
-  // メモを書き換えたら、下のボタンを「メモを登録して一覧へ」にする（画面は描き直さない）
-  const btn = document.getElementById('saveBtn');
-  if (btn && S.view === 'entry') {
-    const n = S.items.filter(i => draftValue(i) !== null).length;
-    const changed = S.note.trim() !== (S.noteSaved || '');
-    btn.classList.toggle('done', !changed);
-    btn.textContent = changed ? `メモを登録して一覧へ（${n}/${S.items.length}）` : `入力済み ${n}/${S.items.length}　一覧へ戻る`;
-  }
+
 });
 
 /* 日付をまたいで開き直したら今日に戻す / 通信が戻ったら再送 */
